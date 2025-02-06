@@ -38,7 +38,14 @@ app.post('/api/chat', async (req, res) => {
             messages: [
                 {
                     role: "system",
-                    content: "You are a helpful programming assistant. When suggesting code, use markdown code blocks with appropriate language tags."
+                    content: `You are a helpful programming assistant. Always format code suggestions as markdown code blocks with language tags. For example:
+                    
+                    \`\`\`python
+                    def example():
+                        return "Hello World"
+                    \`\`\`
+                    
+                    Always use proper markdown formatting and include the language tag.`
                 },
                 {
                     role: "user",
@@ -52,7 +59,6 @@ app.post('/api/chat', async (req, res) => {
         const responseContent = completion.choices[0].message.content;
         console.log('Groq response received:', responseContent);
 
-        // Send the raw response without markdown parsing
         res.json({ response: responseContent });
     } catch (error) {
         console.error('Detailed Groq API Error:', error);
