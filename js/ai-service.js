@@ -1,0 +1,38 @@
+const AI_API_URL = 'http://localhost:3000/api/chat'; // Update this to your actual server URL
+
+export async function getChatResponse(message, context) {
+    try {
+        console.log('Sending request to AI service:', { message, context });
+
+        const response = await fetch(AI_API_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                message,
+                context: {
+                    code: context.code,
+                    language: context.language,
+                }
+            })
+        });
+
+        console.log('Response status:', response.status);
+        const data = await response.json();
+        console.log('Response data:', data);
+
+        if (!response.ok) {
+            throw new Error(data.details || data.error || 'Failed to get AI response');
+        }
+
+        if (!data.response) {
+            throw new Error('No response received from AI service');
+        }
+
+        return data.response;
+    } catch (error) {
+        console.error('AI Service Error:', error);
+        throw error;
+    }
+} 

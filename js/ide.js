@@ -1,5 +1,6 @@
 import { IS_PUTER } from "./puter.js";
 import { toggleThemeMode } from "./ui.js";
+import { getChatResponse } from "./ai-service.js";
 
 const API_KEY = ""; // Get yours at https://platform.sulu.sh/apis/judge0
 
@@ -35,6 +36,7 @@ var layout;
 var sourceEditor;
 var stdinEditor;
 var stdoutEditor;
+var assistantEditor;
 
 var $selectLanguage;
 var $compilerOptions;
@@ -55,15 +57,28 @@ var layoutConfig = {
     content: [{
         type: "row",
         content: [{
-            type: "component",
+            type: "column",
             width: 66,
-            componentName: "source",
-            id: "source",
-            title: "Source Code",
-            isClosable: false,
-            componentState: {
-                readOnly: false
-            }
+            content: [{
+                type: "component",
+                componentName: "source",
+                id: "source",
+                title: "Source Code",
+                isClosable: false,
+                componentState: {
+                    readOnly: false
+                }
+            }, {
+                type: "component",
+                componentName: "assistant",
+                id: "assistant",
+                title: "Code Assistant",
+                height: 30,
+                isClosable: false,
+                componentState: {
+                    readOnly: false
+                }
+            }]
         }, {
             type: "column",
             content: [{
@@ -335,6 +350,7 @@ function setFontSizeForAllEditors(fontSize) {
     sourceEditor.updateOptions({ fontSize: fontSize });
     stdinEditor.updateOptions({ fontSize: fontSize });
     stdoutEditor.updateOptions({ fontSize: fontSize });
+    assistantEditor.updateOptions({ fontSize: fontSize });
 }
 
 async function loadLangauges() {
@@ -556,6 +572,7 @@ document.addEventListener("DOMContentLoaded", async function () {
             });
 
             sourceEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, run);
+            setupInlineChat();
         });
 
         layout.registerComponent("stdin", function (container, state) {
@@ -580,6 +597,167 @@ document.addEventListener("DOMContentLoaded", async function () {
                 fontFamily: "JetBrains Mono",
                 minimap: {
                     enabled: false
+                }
+            });
+        });
+
+        layout.registerComponent("assistant", function (container, state) {
+            const wrapper = container.getElement()[0];
+            wrapper.innerHTML = `
+                <div class="chat-container" style="height: 100%; display: flex; flex-direction: column;">
+                    <div class="chat-messages" style="flex: 1; overflow-y: auto; padding: 10px; background: var(--vscode-editor-background); color: #e0e0e0;">
+                        <style>
+                            .chat-message {
+                                margin-bottom: 10px;
+                                line-height: 1.5;
+                            }
+                            .chat-message pre {
+                                background: #2d2d2d;
+                                padding: 10px;
+                                border-radius: 4px;
+                                overflow-x: auto;
+                                position: relative;
+                            }
+                            .chat-message code {
+                                color: #d4d4d4;
+                            }
+                            .chat-message .user {
+                                color: #4CAF50;
+                            }
+                            .chat-message .assistant {
+                                color: #64B5F6;
+                            }
+                            .code-actions {
+                                position: absolute;
+                                top: 5px;
+                                right: 5px;
+                                display: flex;
+                                gap: 5px;
+                            }
+                            .code-action-btn {
+                                padding: 4px 8px;
+                                border-radius: 3px;
+                                border: none;
+                                cursor: pointer;
+                                font-size: 12px;
+                                opacity: 0.8;
+                            }
+                            .code-action-btn:hover {
+                                opacity: 1;
+                            }
+                            .apply-btn {
+                                background: #4CAF50;
+                                color: white;
+                            }
+                            .copy-btn {
+                                background: #2196F3;
+                                color: white;
+                            }
+                        </style>
+                    </div>
+                    <div class="chat-input-container" style="padding: 10px; border-top: 1px solid #444; display: flex;">
+                        <textarea class="chat-input" 
+                            style="flex: 1; margin-right: 10px; padding: 8px; border-radius: 4px; background: #2d2d2d; color: #e0e0e0; border: 1px solid #444;" 
+                            placeholder="Ask about your code..."></textarea>
+                        <button class="chat-send" 
+                            style="padding: 8px 16px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                            Send
+                        </button>
+                    </div>
+                </div>
+            `;
+
+            const chatInput = wrapper.querySelector('.chat-input');
+            const chatSend = wrapper.querySelector('.chat-send');
+            const chatMessages = wrapper.querySelector('.chat-messages');
+
+            function addCodeActions(preElement, code) {
+                const actionsDiv = document.createElement('div');
+                actionsDiv.className = 'code-actions';
+
+                // Preview & Apply button
+                const applyBtn = document.createElement('button');
+                applyBtn.className = 'code-action-btn apply-btn';
+                applyBtn.textContent = 'Preview & Apply';
+                applyBtn.title = 'Preview and apply changes';
+                applyBtn.onclick = () => {
+                    const currentCode = sourceEditor.getValue();
+                    showDiffModal(currentCode, code, (strategy) => {
+                        applyCodeChanges(code, strategy);
+                    });
+                };
+
+                // Copy button
+                const copyBtn = document.createElement('button');
+                copyBtn.className = 'code-action-btn copy-btn';
+                copyBtn.textContent = 'Copy';
+                copyBtn.title = 'Copy to clipboard';
+                copyBtn.onclick = async () => {
+                    await navigator.clipboard.writeText(code);
+                    copyBtn.textContent = 'Copied!';
+                    setTimeout(() => copyBtn.textContent = 'Copy', 2000);
+                };
+
+                actionsDiv.appendChild(applyBtn);
+                actionsDiv.appendChild(copyBtn);
+                preElement.appendChild(actionsDiv);
+            }
+
+            const sendMessage = async () => {
+                const message = chatInput.value.trim();
+                if (!message) return;
+
+                const userDiv = document.createElement('div');
+                userDiv.className = 'chat-message';
+                userDiv.innerHTML = `<strong class="user">You:</strong> ${message}`;
+                chatMessages.appendChild(userDiv);
+
+                chatInput.value = '';
+
+                const loadingDiv = document.createElement('div');
+                loadingDiv.className = 'chat-message';
+                loadingDiv.innerHTML = '<strong class="assistant">Assistant:</strong> Thinking...';
+                chatMessages.appendChild(loadingDiv);
+
+                try {
+                    const context = {
+                        code: sourceEditor.getValue(),
+                        language: $selectLanguage.find(":selected").text(),
+                    };
+
+                    const response = await getChatResponse(message, context);
+                    console.log('Raw response:', response);
+
+                    // Create a new response div
+                    const responseDiv = document.createElement('div');
+                    responseDiv.className = 'chat-message';
+                    responseDiv.innerHTML = `<strong class="assistant">Assistant:</strong> ${renderMarkdown(response)}`;
+
+                    // Replace loading div with response
+                    loadingDiv.replaceWith(responseDiv);
+
+                    // Debug log for code blocks
+                    const codeBlocks = responseDiv.querySelectorAll('pre code');
+                    console.log('Found code blocks:', codeBlocks.length);
+                    codeBlocks.forEach((block, index) => {
+                        console.log(`Code block ${index}:`, block);
+                        const preElement = block.parentElement;
+                        const code = block.textContent;
+                        console.log(`Adding actions to code block ${index}`);
+                        addCodeActions(preElement, code);
+                    });
+                } catch (error) {
+                    loadingDiv.innerHTML = `<strong class="assistant">Assistant:</strong> Error: ${error.message}`;
+                }
+
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            };
+
+            chatSend.addEventListener('click', sendMessage);
+            chatInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
                 }
             });
         });
@@ -657,6 +835,8 @@ document.addEventListener("DOMContentLoaded", async function () {
             }
         }
     };
+
+    setupInlineChat();
 });
 
 const DEFAULT_SOURCE = "\
@@ -845,4 +1025,455 @@ const EXTENSIONS_TABLE = {
 
 function getLanguageForExtension(extension) {
     return EXTENSIONS_TABLE[extension] || { "flavor": CE, "language_id": 43 }; // Plain Text (https://ce.judge0.com/languages/43)
+}
+
+function renderMarkdown(text) {
+    // Replace backticks with HTML entities in code blocks
+    let rendered = text.replace(/```(\w+)?\n([\s\S]*?)```/g, (match, lang, code) => {
+        return `<pre><code class="language-${lang || ''}">${code.trim()}</code></pre>`;
+    });
+    return rendered;
+}
+
+function createSimpleDiff(originalCode, newCode) {
+    const originalLines = originalCode.split('\n');
+    const newLines = newCode.split('\n');
+    let diff = [];
+
+    diff.push('=== Original Code ===');
+    originalLines.forEach(line => {
+        diff.push(`  ${line}`);
+    });
+
+    diff.push('\n=== Suggested Changes ===');
+    newLines.forEach((line, i) => {
+        if (i >= originalLines.length) {
+            diff.push(`+ ${line}`);
+        } else if (line !== originalLines[i]) {
+            diff.push(`- ${originalLines[i]}`);
+            diff.push(`+ ${line}`);
+        } else {
+            diff.push(`  ${line}`);
+        }
+    });
+
+    if (newLines.length < originalLines.length) {
+        originalLines.slice(newLines.length).forEach(line => {
+            diff.push(`- ${line}`);
+        });
+    }
+
+    return diff.join('\n');
+}
+
+function createMonacoRange(startLine, startCol, endLine, endCol) {
+    return new monaco.Range(startLine, startCol, endLine, endCol);
+}
+
+function getSelectedCodeRange() {
+    const selection = sourceEditor.getSelection();
+    if (selection.isEmpty()) {
+        return null;
+    }
+    return {
+        startLineNumber: selection.startLineNumber,
+        startColumn: selection.startColumn,
+        endLineNumber: selection.endLineNumber,
+        endColumn: selection.endColumn
+    };
+}
+
+const APPLY_STRATEGIES = {
+    REPLACE: 'replace',
+    MERGE: 'merge',
+    APPEND: 'append'
+};
+
+function showDiffModal(originalCode, newCode, onApply) {
+    const modal = document.createElement('div');
+    modal.className = 'diff-modal';
+    modal.innerHTML = `
+        <div class="diff-modal-content" style="
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #1e1e1e;
+            padding: 20px;
+            border-radius: 8px;
+            width: 80%;
+            max-height: 80vh;
+            overflow-y: auto;
+            z-index: 1000;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        ">
+            <h3 style="color: #e0e0e0; margin-bottom: 15px;">Apply Code Changes</h3>
+            <div class="diff-preview" style="
+                background: #2d2d2d;
+                padding: 15px;
+                border-radius: 4px;
+                margin-bottom: 15px;
+                font-family: monospace;
+                white-space: pre;
+                color: #d4d4d4;
+                line-height: 1.5;
+            ">
+                <style>
+                    .diff-preview {
+                        counter-reset: line;
+                    }
+                    .diff-line {
+                        display: block;
+                        white-space: pre;
+                    }
+                    .diff-line:before {
+                        counter-increment: line;
+                        content: counter(line);
+                        display: inline-block;
+                        padding: 0 1em;
+                        margin-right: 0.5em;
+                        color: #666;
+                        border-right: 1px solid #444;
+                        min-width: 3em;
+                        text-align: right;
+                    }
+                    .diff-line.removed {
+                        background: rgba(255, 0, 0, 0.1);
+                        color: #ff8080;
+                    }
+                    .diff-line.added {
+                        background: rgba(0, 255, 0, 0.1);
+                        color: #80ff80;
+                    }
+                    .diff-header {
+                        color: #666;
+                        font-weight: bold;
+                        padding: 5px 0;
+                        margin: 10px 0;
+                        border-bottom: 1px solid #444;
+                    }
+                </style>
+            </div>
+            <div class="apply-options" style="margin-bottom: 15px;">
+                <label style="color: #e0e0e0; display: block; margin-bottom: 10px;">Apply Strategy:</label>
+                <select class="strategy-select" style="
+                    background: #2d2d2d;
+                    color: #e0e0e0;
+                    padding: 5px;
+                    border: 1px solid #444;
+                    border-radius: 4px;
+                    width: 200px;
+                ">
+                    <option value="${APPLY_STRATEGIES.REPLACE}">Replace All</option>
+                    <option value="${APPLY_STRATEGIES.MERGE}">Merge at Cursor</option>
+                    <option value="${APPLY_STRATEGIES.APPEND}">Append to End</option>
+                </select>
+            </div>
+            <div class="modal-actions" style="display: flex; gap: 10px;">
+                <button class="apply-btn" style="
+                    background: #4CAF50;
+                    color: white;
+                    border: none;
+                    padding: 8px 16px;
+                    border-radius: 4px;
+                    cursor: pointer;
+                ">Apply Changes</button>
+                <button class="cancel-btn" style="
+                    background: #666;
+                    color: white;
+                    border: none;
+                    padding: 8px 16px;
+                    border-radius: 4px;
+                    cursor: pointer;
+                ">Cancel</button>
+            </div>
+        </div>
+    `;
+
+    // Format the diff with line numbers and colors
+    const diffPreview = modal.querySelector('.diff-preview');
+    const diffLines = createSimpleDiff(originalCode, newCode).split('\n');
+    const formattedDiff = diffLines.map(line => {
+        if (line.startsWith('===')) {
+            return `<div class="diff-header">${line}</div>`;
+        }
+        let className = 'diff-line';
+        if (line.startsWith('+')) className += ' added';
+        if (line.startsWith('-')) className += ' removed';
+        return `<span class="${className}">${line}</span>`;
+    }).join('\n');
+
+    diffPreview.innerHTML += formattedDiff;
+
+    // Rest of the modal code...
+    const applyBtn = modal.querySelector('.apply-btn');
+    const cancelBtn = modal.querySelector('.cancel-btn');
+    const strategySelect = modal.querySelector('.strategy-select');
+
+    applyBtn.onclick = () => {
+        const strategy = strategySelect.value;
+        onApply(strategy);
+        document.body.removeChild(modal);
+    };
+
+    cancelBtn.onclick = () => {
+        document.body.removeChild(modal);
+    };
+
+    document.body.appendChild(modal);
+}
+
+function applyCodeChanges(code, strategy) {
+    const editor = sourceEditor;
+    const model = editor.getModel();
+    const selection = getSelectedCodeRange();
+
+    switch (strategy) {
+        case APPLY_STRATEGIES.REPLACE:
+            editor.executeEdits('assistant', [{
+                range: model.getFullModelRange(),
+                text: code
+            }]);
+            break;
+
+        case APPLY_STRATEGIES.MERGE:
+            if (selection) {
+                editor.executeEdits('assistant', [{
+                    range: selection,
+                    text: code
+                }]);
+            } else {
+                const position = editor.getPosition();
+                editor.executeEdits('assistant', [{
+                    range: createMonacoRange(
+                        position.lineNumber,
+                        position.column,
+                        position.lineNumber,
+                        position.column
+                    ),
+                    text: code
+                }]);
+            }
+            break;
+
+        case APPLY_STRATEGIES.APPEND:
+            const lastLine = model.getLineCount();
+            const lastLineLength = model.getLineMaxColumn(lastLine);
+            editor.executeEdits('assistant', [{
+                range: createMonacoRange(lastLine, lastLineLength, lastLine, lastLineLength),
+                text: '\n' + code
+            }]);
+            break;
+    }
+}
+
+function setupInlineChat() {
+    // Add context menu action
+    sourceEditor.addAction({
+        id: 'askAboutSelection',
+        label: 'Ask AI About Selection',
+        contextMenuGroupId: 'ai',
+        contextMenuOrder: 1.5,
+        run: async function (editor) {
+            const selection = editor.getSelection();
+            const selectedText = editor.getModel().getValueInRange(selection);
+
+            if (!selectedText) {
+                return;
+            }
+
+            // Create inline widget
+            const contentWidget = {
+                domNode: null,
+                getId: function () {
+                    return 'inline-chat-widget';
+                },
+                getDomNode: function () {
+                    if (!this.domNode) {
+                        this.domNode = document.createElement('div');
+                        this.domNode.className = 'inline-chat-widget';
+                        this.domNode.style.cssText = `
+                            background: #1e1e1e;
+                            border: 1px solid #444;
+                            border-radius: 4px;
+                            padding: 8px;
+                            margin: 8px 0;
+                            min-width: 400px;
+                            width: calc(100% - 100px);
+                            max-width: 800px;
+                            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+                            z-index: 1000;
+                        `;
+
+                        const input = document.createElement('input');
+                        input.type = 'text';
+                        input.placeholder = 'Ask about this code...';
+                        input.style.cssText = `
+                            width: calc(100% - 16px);
+                            padding: 8px;
+                            border: 1px solid #444;
+                            border-radius: 3px;
+                            background: #2d2d2d;
+                            color: #e0e0e0;
+                            margin-bottom: 8px;
+                            font-size: 13px;
+                        `;
+
+                        const buttonContainer = document.createElement('div');
+                        buttonContainer.style.cssText = `
+                            display: flex;
+                            gap: 8px;
+                            justify-content: flex-end;
+                        `;
+
+                        const askButton = document.createElement('button');
+                        askButton.textContent = 'Ask';
+                        askButton.style.cssText = `
+                            padding: 4px 12px;
+                            background: #4CAF50;
+                            color: white;
+                            border: none;
+                            border-radius: 3px;
+                            cursor: pointer;
+                        `;
+
+                        const cancelButton = document.createElement('button');
+                        cancelButton.textContent = 'Cancel';
+                        cancelButton.style.cssText = `
+                            padding: 4px 12px;
+                            background: #666;
+                            color: white;
+                            border: none;
+                            border-radius: 3px;
+                            cursor: pointer;
+                        `;
+
+                        buttonContainer.appendChild(askButton);
+                        buttonContainer.appendChild(cancelButton);
+                        this.domNode.appendChild(input);
+                        this.domNode.appendChild(buttonContainer);
+
+                        // Handle ask button click
+                        askButton.onclick = async () => {
+                            const question = input.value.trim();
+                            if (!question) return;
+
+                            // Replace input with loading indicator
+                            this.domNode.innerHTML = `
+                                <div style="color: #e0e0e0;">
+                                    <strong class="assistant" style="color: #64B5F6;">Assistant:</strong> 
+                                    Thinking...
+                                </div>
+                            `;
+
+                            try {
+                                const context = {
+                                    code: selectedText,
+                                    language: $selectLanguage.find(":selected").text(),
+                                };
+
+                                const response = await getChatResponse(question, context);
+
+                                // Create suggestion widget
+                                this.domNode.innerHTML = `
+                                    <div style="color: #e0e0e0;">
+                                        <strong class="assistant" style="color: #64B5F6;">Assistant:</strong> 
+                                        ${renderMarkdown(response)}
+                                    </div>
+                                    <div style="display: flex; gap: 8px; margin-top: 8px;">
+                                        <button class="preview-btn" style="
+                                            padding: 4px 12px;
+                                            background: #4CAF50;
+                                            color: white;
+                                            border: none;
+                                            border-radius: 3px;
+                                            cursor: pointer;
+                                        ">Preview & Apply</button>
+                                        <button class="close-btn" style="
+                                            padding: 4px 12px;
+                                            background: #666;
+                                            color: white;
+                                            border: none;
+                                            border-radius: 3px;
+                                            cursor: pointer;
+                                        ">Close</button>
+                                    </div>
+                                `;
+
+                                // Extract code from the response
+                                const codeMatch = response.match(/```[\w]*\n([\s\S]*?)```/);
+                                if (codeMatch) {
+                                    const suggestedCode = codeMatch[1].trim();
+
+                                    // Add preview button handler
+                                    this.domNode.querySelector('.preview-btn').onclick = () => {
+                                        showDiffModal(selectedText, suggestedCode, (strategy) => {
+                                            if (strategy === APPLY_STRATEGIES.REPLACE) {
+                                                editor.executeEdits('assistant', [{
+                                                    range: selection,
+                                                    text: suggestedCode
+                                                }]);
+                                            } else {
+                                                applyCodeChanges(suggestedCode, strategy);
+                                            }
+                                            editor.removeContentWidget(contentWidget);
+                                        });
+                                    };
+                                }
+
+                                // Add close button handler
+                                this.domNode.querySelector('.close-btn').onclick = () => {
+                                    editor.removeContentWidget(contentWidget);
+                                };
+
+                            } catch (error) {
+                                this.domNode.innerHTML = `
+                                    <div style="color: #ff8080;">Error: ${error.message}</div>
+                                    <button class="close-btn" style="
+                                        padding: 4px 12px;
+                                        background: #666;
+                                        color: white;
+                                        border: none;
+                                        border-radius: 3px;
+                                        cursor: pointer;
+                                        margin-top: 8px;
+                                    ">Close</button>
+                                `;
+
+                                this.domNode.querySelector('.close-btn').onclick = () => {
+                                    editor.removeContentWidget(contentWidget);
+                                };
+                            }
+                        };
+
+                        // Handle cancel button click
+                        cancelButton.onclick = () => {
+                            editor.removeContentWidget(contentWidget);
+                        };
+
+                        // Handle Enter key in input
+                        input.onkeypress = (e) => {
+                            if (e.key === 'Enter') {
+                                e.preventDefault();
+                                askButton.click();
+                            }
+                        };
+                    }
+                    return this.domNode;
+                },
+                getPosition: function () {
+                    return {
+                        position: {
+                            lineNumber: selection.endLineNumber + 1,
+                            column: 1
+                        },
+                        preference: [monaco.editor.ContentWidgetPositionPreference.BELOW]
+                    };
+                }
+            };
+
+            editor.addContentWidget(contentWidget);
+            contentWidget.getDomNode().querySelector('input').focus();
+        }
+    });
 }
