@@ -1,8 +1,11 @@
+require('dotenv').config();
+
 const express = require('express');
 const Groq = require('groq-sdk');
 const cors = require('cors');
 const path = require('path');
 const marked = require('marked');
+const fs = require('fs');
 const app = express();
 
 // Enable CORS and JSON parsing
@@ -265,6 +268,34 @@ app.post('/api/update-keys', (req, res) => {
             process.env.OPENROUTER_API_KEY = openrouter_api_key;
             console.log('OpenRouter API key updated');
         }
+
+        // Update .env file
+        const envPath = path.join(__dirname, '.env');
+        let envContent = '';
+
+        if (fs.existsSync(envPath)) {
+            envContent = fs.readFileSync(envPath, 'utf8');
+        }
+
+        // Update or add GROQ_API_KEY
+        if (groq_api_key) {
+            if (envContent.includes('GROQ_API_KEY=')) {
+                envContent = envContent.replace(/GROQ_API_KEY=.*\n?/, `GROQ_API_KEY=${groq_api_key}\n`);
+            } else {
+                envContent += `\nGROQ_API_KEY=${groq_api_key}`;
+            }
+        }
+
+        // Update or add OPENROUTER_API_KEY
+        if (openrouter_api_key) {
+            if (envContent.includes('OPENROUTER_API_KEY=')) {
+                envContent = envContent.replace(/OPENROUTER_API_KEY=.*\n?/, `OPENROUTER_API_KEY=${openrouter_api_key}\n`);
+            } else {
+                envContent += `\nOPENROUTER_API_KEY=${openrouter_api_key}`;
+            }
+        }
+
+        fs.writeFileSync(envPath, envContent.trim() + '\n');
 
         // Verify the keys are set
         console.log('API Keys Status:', {
