@@ -106,6 +106,9 @@ var layoutConfig = {
 
 var gPuterFile;
 
+let currentModel = 'mixtral-8x7b-32768';
+let availableModels = {};
+
 function encode(str) {
     return btoa(unescape(encodeURIComponent(str || "")));
 }
@@ -605,6 +608,34 @@ document.addEventListener("DOMContentLoaded", async function () {
             const wrapper = container.getElement()[0];
             wrapper.innerHTML = `
                 <div class="chat-container" style="height: 100%; display: flex; flex-direction: column;">
+                    <div class="model-selector" style="padding: 10px; border-bottom: 1px solid #444; display: flex; align-items: center; justify-content: space-between;">
+                        <div style="display: flex; align-items: center;">
+                            <label style="color: #e0e0e0; margin-right: 8px;">Model:</label>
+                            <select class="model-select" style="
+                                background: #2d2d2d;
+                                color: #e0e0e0;
+                                padding: 5px;
+                                border: 1px solid #444;
+                                border-radius: 4px;
+                                width: 300px;
+                            ">
+                            </select>
+                        </div>
+                        <button class="settings-btn" style="
+                            padding: 5px 10px;
+                            background: #2d2d2d;
+                            color: #e0e0e0;
+                            border: 1px solid #444;
+                            border-radius: 4px;
+                            cursor: pointer;
+                            display: flex;
+                            align-items: center;
+                            gap: 5px;
+                        ">
+                            <i class="cog icon"></i>
+                            API Keys
+                        </button>
+                    </div>
                     <div class="chat-messages" style="flex: 1; overflow-y: auto; padding: 10px; background: var(--vscode-editor-background); color: #e0e0e0;">
                         <style>
                             .chat-message {
@@ -667,9 +698,51 @@ document.addEventListener("DOMContentLoaded", async function () {
                 </div>
             `;
 
+            const modelSelect = wrapper.querySelector('.model-select');
             const chatInput = wrapper.querySelector('.chat-input');
             const chatSend = wrapper.querySelector('.chat-send');
             const chatMessages = wrapper.querySelector('.chat-messages');
+
+            // Populate model selector
+            fetchAvailableModels().then(() => {
+                modelSelect.innerHTML = ''; // Clear existing options
+
+                // Create option groups for each provider
+                const groqGroup = document.createElement('optgroup');
+                groqGroup.label = 'Groq Models';
+
+                const openRouterGroup = document.createElement('optgroup');
+                openRouterGroup.label = 'OpenRouter Models';
+
+                Object.entries(availableModels).forEach(([id, model]) => {
+                    const option = document.createElement('option');
+                    option.value = id;
+                    option.textContent = `${model.name} (${model.context_length.toLocaleString()} tokens)`;
+                    option.title = model.description;
+                    if (model.default) {
+                        option.selected = true;
+                        currentModel = id;
+                    }
+
+                    // Add to appropriate group
+                    if (model.provider === 'groq') {
+                        groqGroup.appendChild(option);
+                    } else {
+                        openRouterGroup.appendChild(option);
+                    }
+                });
+
+                // Add groups to select element
+                modelSelect.appendChild(groqGroup);
+                modelSelect.appendChild(openRouterGroup);
+
+                console.log('Selected model:', currentModel);
+            });
+
+            modelSelect.addEventListener('change', (e) => {
+                currentModel = e.target.value;
+                console.log('Model changed to:', currentModel); // Add debug log
+            });
 
             function addCodeActions(preElement, code) {
                 const actionsDiv = document.createElement('div');
@@ -725,7 +798,7 @@ document.addEventListener("DOMContentLoaded", async function () {
                         language: $selectLanguage.find(":selected").text(),
                     };
 
-                    const response = await getChatResponse(message, context);
+                    const response = await getChatResponse(message, context, currentModel);
                     console.log('Raw response:', response);
 
                     // Create a new response div
@@ -760,6 +833,126 @@ document.addEventListener("DOMContentLoaded", async function () {
                     sendMessage();
                 }
             });
+
+            // Add this after the wrapper.innerHTML = `...` section
+            const settingsModal = document.createElement('div');
+            settingsModal.className = 'settings-modal';
+            settingsModal.style.display = 'none';
+            settingsModal.innerHTML = `
+                <div class="modal-content" style="
+                    position: fixed;
+                    top: 50%;
+                    left: 50%;
+                    transform: translate(-50%, -50%);
+                    background: #1e1e1e;
+                    padding: 20px;
+                    border-radius: 8px;
+                    width: 500px;
+                    z-index: 1000;
+                    box-shadow: 0 0 20px rgba(0,0,0,0.5);
+                ">
+                    <h3 style="color: #e0e0e0; margin-bottom: 20px;">API Settings</h3>
+                    <div style="margin-bottom: 15px;">
+                        <label style="color: #e0e0e0; display: block; margin-bottom: 5px;">Groq API Key:</label>
+                        <input type="password" class="groq-api-key" style="
+                            width: 100%;
+                            padding: 8px;
+                            background: #2d2d2d;
+                            color: #e0e0e0;
+                            border: 1px solid #444;
+                            border-radius: 4px;
+                        " placeholder="Enter your Groq API key">
+                    </div>
+                    <div style="margin-bottom: 20px;">
+                        <label style="color: #e0e0e0; display: block; margin-bottom: 5px;">OpenRouter API Key:</label>
+                        <input type="password" class="openrouter-api-key" style="
+                            width: 100%;
+                            padding: 8px;
+                            background: #2d2d2d;
+                            color: #e0e0e0;
+                            border: 1px solid #444;
+                            border-radius: 4px;
+                        " placeholder="Enter your OpenRouter API key">
+                    </div>
+                    <div style="display: flex; justify-content: flex-end; gap: 10px;">
+                        <button class="save-settings" style="
+                            padding: 8px 16px;
+                            background: #4CAF50;
+                            color: white;
+                            border: none;
+                            border-radius: 4px;
+                            cursor: pointer;
+                        ">Save</button>
+                        <button class="close-settings" style="
+                            padding: 8px 16px;
+                            background: #666;
+                            color: white;
+                            border: none;
+                            border-radius: 4px;
+                            cursor: pointer;
+                        ">Cancel</button>
+                    </div>
+                </div>
+            `;
+            wrapper.appendChild(settingsModal);
+
+            // Add event listeners for the settings modal
+            const settingsBtn = wrapper.querySelector('.settings-btn');
+            const closeSettingsBtn = wrapper.querySelector('.close-settings');
+            const saveSettingsBtn = wrapper.querySelector('.save-settings');
+            const groqKeyInput = wrapper.querySelector('.groq-api-key');
+            const openrouterKeyInput = wrapper.querySelector('.openrouter-api-key');
+
+            // Load saved API keys from localStorage
+            groqKeyInput.value = localStorage.getItem('groq_api_key') || '';
+            openrouterKeyInput.value = localStorage.getItem('openrouter_api_key') || '';
+
+            settingsBtn.onclick = () => {
+                settingsModal.style.display = 'block';
+            };
+
+            closeSettingsBtn.onclick = () => {
+                settingsModal.style.display = 'none';
+            };
+
+            saveSettingsBtn.onclick = async () => {
+                const groqKey = groqKeyInput.value.trim();
+                const openrouterKey = openrouterKeyInput.value.trim();
+
+                // Save to localStorage
+                localStorage.setItem('groq_api_key', groqKey);
+                localStorage.setItem('openrouter_api_key', openrouterKey);
+
+                // Send to server
+                try {
+                    const response = await fetch('/api/update-keys', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            groq_api_key: groqKey,
+                            openrouter_api_key: openrouterKey
+                        })
+                    });
+
+                    if (!response.ok) {
+                        throw new Error('Failed to update API keys');
+                    }
+
+                    settingsModal.style.display = 'none';
+                } catch (error) {
+                    console.error('Error updating API keys:', error);
+                    alert('Failed to update API keys. Please try again.');
+                }
+            };
+
+            // Close modal when clicking outside
+            window.onclick = (event) => {
+                if (event.target === settingsModal) {
+                    settingsModal.style.display = 'none';
+                }
+            };
         });
 
         layout.on("initialised", function () {
@@ -1293,74 +1486,72 @@ function setupInlineChat() {
                         this.domNode = document.createElement('div');
                         this.domNode.className = 'inline-chat-widget';
                         this.domNode.style.cssText = `
+                            position: absolute;
+                            z-index: 1000;
                             background: #1e1e1e;
                             border: 1px solid #444;
-                            border-radius: 4px;
-                            padding: 8px;
-                            margin: 8px 0;
-                            min-width: 400px;
-                            width: calc(100% - 100px);
+                            border-radius: 6px;
                             max-width: 800px;
-                            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-                            z-index: 1000;
+                            padding: 16px;
+                            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+                        `;
+
+                        // Create input field first
+                        const inputContainer = document.createElement('div');
+                        inputContainer.style.cssText = `
+                            display: flex;
+                            gap: 8px;
+                            align-items: center;
                         `;
 
                         const input = document.createElement('input');
                         input.type = 'text';
                         input.placeholder = 'Ask about this code...';
                         input.style.cssText = `
-                            width: calc(100% - 16px);
+                            flex: 1;
                             padding: 8px;
-                            border: 1px solid #444;
-                            border-radius: 3px;
                             background: #2d2d2d;
                             color: #e0e0e0;
-                            margin-bottom: 8px;
+                            border: 1px solid #444;
+                            border-radius: 4px;
                             font-size: 13px;
-                        `;
-
-                        const buttonContainer = document.createElement('div');
-                        buttonContainer.style.cssText = `
-                            display: flex;
-                            gap: 8px;
-                            justify-content: flex-end;
                         `;
 
                         const askButton = document.createElement('button');
                         askButton.textContent = 'Ask';
                         askButton.style.cssText = `
-                            padding: 4px 12px;
+                            padding: 8px 16px;
                             background: #4CAF50;
                             color: white;
                             border: none;
-                            border-radius: 3px;
+                            border-radius: 4px;
                             cursor: pointer;
                         `;
 
-                        const cancelButton = document.createElement('button');
-                        cancelButton.textContent = 'Cancel';
-                        cancelButton.style.cssText = `
-                            padding: 4px 12px;
+                        const closeButton = document.createElement('button');
+                        closeButton.textContent = 'Cancel';
+                        closeButton.style.cssText = `
+                            padding: 8px 16px;
                             background: #666;
                             color: white;
                             border: none;
-                            border-radius: 3px;
+                            border-radius: 4px;
                             cursor: pointer;
                         `;
 
-                        buttonContainer.appendChild(askButton);
-                        buttonContainer.appendChild(cancelButton);
-                        this.domNode.appendChild(input);
-                        this.domNode.appendChild(buttonContainer);
+                        inputContainer.appendChild(input);
+                        inputContainer.appendChild(askButton);
+                        inputContainer.appendChild(closeButton);
+                        this.domNode.appendChild(inputContainer);
 
                         // Handle ask button click
-                        askButton.onclick = async () => {
+                        const handleAsk = async () => {
                             const question = input.value.trim();
                             if (!question) return;
 
-                            // Replace input with loading indicator
+                            // Show loading state
                             this.domNode.innerHTML = `
-                                <div style="color: #e0e0e0;">
+                                <div style="padding: 16px; color: #e0e0e0;">
                                     <strong class="assistant" style="color: #64B5F6;">Assistant:</strong> 
                                     Thinking...
                                 </div>
@@ -1372,41 +1563,92 @@ function setupInlineChat() {
                                     language: $selectLanguage.find(":selected").text(),
                                 };
 
-                                const response = await getChatResponse(question, context);
+                                const response = await getChatResponse(question, context, currentModel);
 
-                                // Create suggestion widget
-                                this.domNode.innerHTML = `
-                                    <div style="color: #e0e0e0;">
-                                        <strong class="assistant" style="color: #64B5F6;">Assistant:</strong> 
-                                        ${renderMarkdown(response)}
+                                // Create response container with better scrolling support
+                                const contentContainer = document.createElement('div');
+                                contentContainer.style.cssText = `
+                                    max-height: 500px;
+                                    overflow-y: scroll;
+                                    color: #e0e0e0;
+                                    padding: 16px;
+                                    padding-right: 24px;
+                                    margin-bottom: 16px;
+                                    background: #1e1e1e;
+                                    border-radius: 4px;
+                                    
+                                    /* Enable touch scrolling */
+                                    -webkit-overflow-scrolling: touch;
+                                    overscroll-behavior: contain; /* Prevent scroll chaining */
+                                    
+                                    /* Custom scrollbar styling */
+                                    &::-webkit-scrollbar {
+                                        width: 12px;
+                                        height: 12px;
+                                    }
+                                    
+                                    &::-webkit-scrollbar-track {
+                                        background: #2d2d2d;
+                                        border-radius: 4px;
+                                    }
+                                    
+                                    &::-webkit-scrollbar-thumb {
+                                        background: #555;
+                                        border-radius: 4px;
+                                        border: 2px solid #2d2d2d;
+                                    }
+                                    
+                                    &::-webkit-scrollbar-thumb:hover {
+                                        background: #666;
+                                    }
+                                `;
+                                contentContainer.innerHTML = `
+                                    <div style="margin-bottom: 12px;">
+                                        <strong class="assistant" style="color: #64B5F6;">Assistant:</strong>
                                     </div>
-                                    <div style="display: flex; gap: 8px; margin-top: 8px;">
-                                        <button class="preview-btn" style="
-                                            padding: 4px 12px;
-                                            background: #4CAF50;
-                                            color: white;
-                                            border: none;
-                                            border-radius: 3px;
-                                            cursor: pointer;
-                                        ">Preview & Apply</button>
-                                        <button class="close-btn" style="
-                                            padding: 4px 12px;
-                                            background: #666;
-                                            color: white;
-                                            border: none;
-                                            border-radius: 3px;
-                                            cursor: pointer;
-                                        ">Close</button>
-                                    </div>
+                                    <div style="
+                                        white-space: pre-wrap;
+                                        word-break: break-word;
+                                        line-height: 1.5;
+                                        position: relative;
+                                    ">${renderMarkdown(response)}</div>
                                 `;
 
-                                // Extract code from the response
+                                // Create button container
+                                const buttonContainer = document.createElement('div');
+                                buttonContainer.style.cssText = `
+                                    display: flex;
+                                    gap: 8px;
+                                    margin-top: 16px;
+                                `;
+
+                                const previewButton = document.createElement('button');
+                                previewButton.textContent = 'Preview & Apply';
+                                previewButton.style.cssText = `
+                                    padding: 6px 12px;
+                                    background: #4CAF50;
+                                    color: white;
+                                    border: none;
+                                    border-radius: 4px;
+                                    cursor: pointer;
+                                `;
+
+                                const closeResponseButton = document.createElement('button');
+                                closeResponseButton.textContent = 'Close';
+                                closeResponseButton.style.cssText = `
+                                    padding: 6px 12px;
+                                    background: #666;
+                                    color: white;
+                                    border: none;
+                                    border-radius: 4px;
+                                    cursor: pointer;
+                                `;
+
+                                // Handle code preview and apply
                                 const codeMatch = response.match(/```[\w]*\n([\s\S]*?)```/);
                                 if (codeMatch) {
                                     const suggestedCode = codeMatch[1].trim();
-
-                                    // Add preview button handler
-                                    this.domNode.querySelector('.preview-btn').onclick = () => {
+                                    previewButton.onclick = () => {
                                         showDiffModal(selectedText, suggestedCode, (strategy) => {
                                             if (strategy === APPLY_STRATEGIES.REPLACE) {
                                                 editor.executeEdits('assistant', [{
@@ -1419,25 +1661,37 @@ function setupInlineChat() {
                                             editor.removeContentWidget(contentWidget);
                                         });
                                     };
+                                } else {
+                                    previewButton.disabled = true;
+                                    previewButton.style.opacity = '0.5';
                                 }
 
-                                // Add close button handler
-                                this.domNode.querySelector('.close-btn').onclick = () => {
+                                closeResponseButton.onclick = () => {
                                     editor.removeContentWidget(contentWidget);
                                 };
 
+                                buttonContainer.appendChild(previewButton);
+                                buttonContainer.appendChild(closeResponseButton);
+
+                                // Update the widget content
+                                this.domNode.innerHTML = '';
+                                this.domNode.appendChild(contentContainer);
+                                this.domNode.appendChild(buttonContainer);
+
                             } catch (error) {
                                 this.domNode.innerHTML = `
-                                    <div style="color: #ff8080;">Error: ${error.message}</div>
-                                    <button class="close-btn" style="
-                                        padding: 4px 12px;
-                                        background: #666;
-                                        color: white;
-                                        border: none;
-                                        border-radius: 3px;
-                                        cursor: pointer;
-                                        margin-top: 8px;
-                                    ">Close</button>
+                                    <div style="padding: 16px;">
+                                        <div style="color: #ff8080;">Error: ${error.message}</div>
+                                        <button class="close-btn" style="
+                                            padding: 4px 12px;
+                                            background: #666;
+                                            color: white;
+                                            border: none;
+                                            border-radius: 4px;
+                                            cursor: pointer;
+                                            margin-top: 8px;
+                                        ">Close</button>
+                                    </div>
                                 `;
 
                                 this.domNode.querySelector('.close-btn').onclick = () => {
@@ -1446,8 +1700,8 @@ function setupInlineChat() {
                             }
                         };
 
-                        // Handle cancel button click
-                        cancelButton.onclick = () => {
+                        askButton.onclick = handleAsk;
+                        closeButton.onclick = () => {
                             editor.removeContentWidget(contentWidget);
                         };
 
@@ -1455,9 +1709,11 @@ function setupInlineChat() {
                         input.onkeypress = (e) => {
                             if (e.key === 'Enter') {
                                 e.preventDefault();
-                                askButton.click();
+                                handleAsk();
                             }
                         };
+
+                        return this.domNode;
                     }
                     return this.domNode;
                 },
@@ -1476,4 +1732,13 @@ function setupInlineChat() {
             contentWidget.getDomNode().querySelector('input').focus();
         }
     });
+}
+
+async function fetchAvailableModels() {
+    try {
+        const response = await fetch('/api/models');
+        availableModels = await response.json();
+    } catch (error) {
+        console.error('Failed to fetch models:', error);
+    }
 }

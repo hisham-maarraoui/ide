@@ -1,6 +1,7 @@
 const AI_API_URL = 'http://localhost:3000/api/chat'; // Update this to your actual server URL
 
-export async function getChatResponse(message, context) {
+export async function getChatResponse(message, context, model = 'mixtral-8x7b-32768') {
+    console.log('Sending request with model:', model); // Add debug log
     try {
         console.log('Sending request to AI service:', { message, context });
 
@@ -9,13 +10,7 @@ export async function getChatResponse(message, context) {
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({
-                message,
-                context: {
-                    code: context.code,
-                    language: context.language,
-                }
-            })
+            body: JSON.stringify({ message, context, model })
         });
 
         console.log('Response status:', response.status);

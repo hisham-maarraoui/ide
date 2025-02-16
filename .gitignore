@@ -3,6 +3,7 @@
 server/.env
 .env.*
 !.env.example
+*.env.backup
 
 # Dependencies
 node_modules/
