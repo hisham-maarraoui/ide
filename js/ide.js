@@ -109,6 +109,32 @@ var gPuterFile;
 let currentModel = 'mixtral-8x7b-32768';
 let availableModels = {};
 
+const AVAILABLE_MODELS = {
+    // Groq Models
+    'groq/mixtral-8x7b-32768': {
+        name: 'Mixtral 8x7B',
+        description: 'Powerful open-source model with large 32K context window',
+        context_length: 32768,
+        provider: 'groq',
+        default: false
+    },
+    'groq/deepseek-r1-distill-llama-70b': {
+        name: 'DeepSeek R1 Distill LLaMA 70B (Think Tags Removed)',
+        description: 'DeepSeek R1 Distill LLaMA 70B',
+        context_length: 32768,
+        provider: 'groq',
+        default: true
+    },
+    // OpenRouter Models
+    'anthropic/claude-3-haiku': {
+        name: 'Claude 3 Haiku',
+        description: 'Fast and efficient Claude model',
+        context_length: 4096,
+        provider: 'openrouter',
+        default: false
+    }
+};
+
 function encode(str) {
     return btoa(unescape(encodeURIComponent(str || "")));
 }
@@ -780,6 +806,33 @@ document.addEventListener("DOMContentLoaded", async function () {
                 const message = chatInput.value.trim();
                 if (!message) return;
 
+                console.log('Sending message:', message);  // Debug log
+
+                const apiKeys = getStoredApiKeys();
+                const model = AVAILABLE_MODELS[currentModel];
+
+                console.log('Current model:', model, 'Current model ID:', currentModel);  // Debug log
+                console.log('API keys present:', {
+                    groq: !!apiKeys.groq,
+                    openrouter: !!apiKeys.openrouter
+                });  // Debug log
+
+                // Check for required API key
+                if (!model) {
+                    alert('Please select a valid model');
+                    return;
+                }
+
+                if (model.provider === 'groq' && !apiKeys.groq) {
+                    alert('Please configure your Groq API key in settings first.');
+                    return;
+                }
+                if (model.provider === 'openrouter' && !apiKeys.openrouter) {
+                    alert('Please configure your OpenRouter API key in settings first.');
+                    return;
+                }
+
+                // Show user message and loading state
                 const userDiv = document.createElement('div');
                 userDiv.className = 'chat-message';
                 userDiv.innerHTML = `<strong class="user">You:</strong> ${message}`;
@@ -793,37 +846,58 @@ document.addEventListener("DOMContentLoaded", async function () {
                 chatMessages.appendChild(loadingDiv);
 
                 try {
-                    const context = {
-                        code: sourceEditor.getValue(),
-                        language: $selectLanguage.find(":selected").text(),
-                    };
+                    console.log('Making API request...');  // Debug log
+                    const response = await fetch('/api/chat', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            message,
+                            context: {
+                                code: sourceEditor.getValue(),
+                                language: $selectLanguage.find(":selected").text(),
+                            },
+                            model: currentModel,
+                            groq_api_key: apiKeys.groq,
+                            openrouter_api_key: apiKeys.openrouter
+                        })
+                    });
 
-                    const response = await getChatResponse(message, context, currentModel);
-                    console.log('Raw response:', response);
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error?.details || `Request failed with status ${response.status}`);
+                    }
+
+                    const data = await response.json();
+                    console.log('Response received:', data);  // Debug log
+
+                    if (data.error) {
+                        throw new Error(data.error.details || 'Unknown error occurred');
+                    }
 
                     // Create a new response div
                     const responseDiv = document.createElement('div');
                     responseDiv.className = 'chat-message';
-                    responseDiv.innerHTML = `<strong class="assistant">Assistant:</strong> ${renderMarkdown(response)}`;
+                    responseDiv.innerHTML = `<strong class="assistant">Assistant:</strong> ${renderMarkdown(data.response)}`;
 
                     // Replace loading div with response
                     loadingDiv.replaceWith(responseDiv);
 
-                    // Debug log for code blocks
+                    // Add code block actions
                     const codeBlocks = responseDiv.querySelectorAll('pre code');
-                    console.log('Found code blocks:', codeBlocks.length);
-                    codeBlocks.forEach((block, index) => {
-                        console.log(`Code block ${index}:`, block);
+                    codeBlocks.forEach((block) => {
                         const preElement = block.parentElement;
                         const code = block.textContent;
-                        console.log(`Adding actions to code block ${index}`);
                         addCodeActions(preElement, code);
                     });
+
+                    // Scroll to bottom
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
                 } catch (error) {
+                    console.error('Chat error:', error);  // Debug log
                     loadingDiv.innerHTML = `<strong class="assistant">Assistant:</strong> Error: ${error.message}`;
                 }
-
-                chatMessages.scrollTop = chatMessages.scrollHeight;
             };
 
             chatSend.addEventListener('click', sendMessage);
@@ -919,64 +993,27 @@ document.addEventListener("DOMContentLoaded", async function () {
                 const groqKey = groqKeyInput.value.trim();
                 const openrouterKey = openrouterKeyInput.value.trim();
 
-                // Show loading state
-                saveSettingsBtn.textContent = 'Saving...';
-                saveSettingsBtn.disabled = true;
+                // Save to localStorage only
+                if (groqKey) localStorage.setItem('groq_api_key', groqKey);
+                if (openrouterKey) localStorage.setItem('openrouter_api_key', openrouterKey);
 
-                try {
-                    // Save to localStorage
-                    localStorage.setItem('groq_api_key', groqKey);
-                    localStorage.setItem('openrouter_api_key', openrouterKey);
+                settingsModal.style.display = 'none';
 
-                    // Send to server
-                    const response = await fetch('/api/update-keys', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            groq_api_key: groqKey,
-                            openrouter_api_key: openrouterKey
-                        })
-                    });
-
-                    if (!response.ok) {
-                        throw new Error('Failed to update API keys');
-                    }
-
-                    // Verify keys were set
-                    const verifyResponse = await fetch('/api/check-keys');
-                    const keyStatus = await verifyResponse.json();
-
-                    if (!keyStatus.groqKeyPresent && !keyStatus.openRouterKeyPresent) {
-                        throw new Error('API keys were not properly set');
-                    }
-
-                    settingsModal.style.display = 'none';
-
-                    // Show success message
-                    const successMsg = document.createElement('div');
-                    successMsg.style.cssText = `
-                        position: fixed;
-                        top: 20px;
-                        right: 20px;
-                        padding: 12px 24px;
-                        background: #4CAF50;
-                        color: white;
-                        border-radius: 4px;
-                        z-index: 1000;
-                    `;
-                    successMsg.textContent = 'API keys updated successfully!';
-                    document.body.appendChild(successMsg);
-                    setTimeout(() => successMsg.remove(), 3000);
-
-                } catch (error) {
-                    console.error('Error updating API keys:', error);
-                    alert('Failed to update API keys: ' + error.message);
-                } finally {
-                    saveSettingsBtn.textContent = 'Save';
-                    saveSettingsBtn.disabled = false;
-                }
+                // Show success message
+                const successMsg = document.createElement('div');
+                successMsg.style.cssText = `
+                    position: fixed;
+                    top: 20px;
+                    right: 20px;
+                    padding: 12px 24px;
+                    background: #4CAF50;
+                    color: white;
+                    border-radius: 4px;
+                    z-index: 1000;
+                `;
+                successMsg.textContent = 'API keys saved successfully!';
+                document.body.appendChild(successMsg);
+                setTimeout(() => successMsg.remove(), 3000);
             };
 
             // Close modal when clicking outside
@@ -1773,4 +1810,12 @@ async function fetchAvailableModels() {
     } catch (error) {
         console.error('Failed to fetch models:', error);
     }
+}
+
+// Add functions to handle API keys in localStorage
+function getStoredApiKeys() {
+    return {
+        groq: localStorage.getItem('groq_api_key'),
+        openrouter: localStorage.getItem('openrouter_api_key')
+    };
 }
