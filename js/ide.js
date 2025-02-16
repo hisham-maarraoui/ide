@@ -919,12 +919,16 @@ document.addEventListener("DOMContentLoaded", async function () {
                 const groqKey = groqKeyInput.value.trim();
                 const openrouterKey = openrouterKeyInput.value.trim();
 
-                // Save to localStorage
-                localStorage.setItem('groq_api_key', groqKey);
-                localStorage.setItem('openrouter_api_key', openrouterKey);
+                // Show loading state
+                saveSettingsBtn.textContent = 'Saving...';
+                saveSettingsBtn.disabled = true;
 
-                // Send to server
                 try {
+                    // Save to localStorage
+                    localStorage.setItem('groq_api_key', groqKey);
+                    localStorage.setItem('openrouter_api_key', openrouterKey);
+
+                    // Send to server
                     const response = await fetch('/api/update-keys', {
                         method: 'POST',
                         headers: {
@@ -940,10 +944,38 @@ document.addEventListener("DOMContentLoaded", async function () {
                         throw new Error('Failed to update API keys');
                     }
 
+                    // Verify keys were set
+                    const verifyResponse = await fetch('/api/check-keys');
+                    const keyStatus = await verifyResponse.json();
+
+                    if (!keyStatus.groqKeyPresent && !keyStatus.openRouterKeyPresent) {
+                        throw new Error('API keys were not properly set');
+                    }
+
                     settingsModal.style.display = 'none';
+
+                    // Show success message
+                    const successMsg = document.createElement('div');
+                    successMsg.style.cssText = `
+                        position: fixed;
+                        top: 20px;
+                        right: 20px;
+                        padding: 12px 24px;
+                        background: #4CAF50;
+                        color: white;
+                        border-radius: 4px;
+                        z-index: 1000;
+                    `;
+                    successMsg.textContent = 'API keys updated successfully!';
+                    document.body.appendChild(successMsg);
+                    setTimeout(() => successMsg.remove(), 3000);
+
                 } catch (error) {
                     console.error('Error updating API keys:', error);
-                    alert('Failed to update API keys. Please try again.');
+                    alert('Failed to update API keys: ' + error.message);
+                } finally {
+                    saveSettingsBtn.textContent = 'Save';
+                    saveSettingsBtn.disabled = false;
                 }
             };
 

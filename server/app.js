@@ -172,15 +172,19 @@ app.post('/api/chat', async (req, res) => {
     try {
         const { message, context } = req.body;
         console.log('Received request with model:', modelId);
-        console.log('Full request body:', req.body);
 
-        if (!message || !context) {
-            throw new Error('Missing message or context');
-        }
-
+        // Get the model first
         const model = AVAILABLE_MODELS[modelId];
         if (!model) {
             throw new Error('Invalid model selected');
+        }
+
+        // Then check API keys
+        if (model.provider === 'groq' && !process.env.GROQ_API_KEY) {
+            throw new Error('Groq API key not configured. Please add your API key in settings.');
+        }
+        if (model.provider === 'openrouter' && !process.env.OPENROUTER_API_KEY) {
+            throw new Error('OpenRouter API key not configured. Please add your API key in settings.');
         }
 
         const messages = [
@@ -213,23 +217,10 @@ When helping with code:
                     max_tokens: model.context_length
                 });
             } catch (error) {
-                if (error.message.includes('API key not configured')) {
-                    res.status(401).json({
-                        error: 'API key not configured',
-                        details: 'Please configure your Groq API key in settings'
-                    });
-                    return;
-                }
-                throw error;
+                console.error('Groq API Error:', error);
+                throw new Error(`Groq API error: ${error.message}`);
             }
         } else if (model.provider === 'openrouter') {
-            if (!process.env.OPENROUTER_API_KEY) {
-                res.status(401).json({
-                    error: 'API key not configured',
-                    details: 'Please configure your OpenRouter API key in settings'
-                });
-                return;
-            }
             completion = await callOpenRouter(modelId, messages, 0.1);
         }
 
@@ -244,8 +235,7 @@ When helping with code:
         res.status(500).json({
             error: 'Failed to get AI response',
             details: error.message,
-            model: modelId,
-            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+            model: modelId
         });
     }
 });
@@ -263,17 +253,41 @@ app.get('/', (req, res) => {
 app.post('/api/update-keys', (req, res) => {
     const { groq_api_key, openrouter_api_key } = req.body;
 
-    // Update environment variables
-    if (groq_api_key) {
-        process.env.GROQ_API_KEY = groq_api_key;
-        // Reset the client so it will be recreated with new key
-        groqClient = null;
-    }
-    if (openrouter_api_key) {
-        process.env.OPENROUTER_API_KEY = openrouter_api_key;
-    }
+    try {
+        // Update environment variables
+        if (groq_api_key) {
+            process.env.GROQ_API_KEY = groq_api_key;
+            // Reset the client so it will be recreated with new key
+            groqClient = null;
+            console.log('Groq API key updated');
+        }
+        if (openrouter_api_key) {
+            process.env.OPENROUTER_API_KEY = openrouter_api_key;
+            console.log('OpenRouter API key updated');
+        }
 
-    res.json({ success: true });
+        // Verify the keys are set
+        console.log('API Keys Status:', {
+            groqKeyPresent: !!process.env.GROQ_API_KEY,
+            openRouterKeyPresent: !!process.env.OPENROUTER_API_KEY
+        });
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error updating API keys:', error);
+        res.status(500).json({
+            error: 'Failed to update API keys',
+            details: error.message
+        });
+    }
+});
+
+// Add a debug endpoint to check API key status
+app.get('/api/check-keys', (req, res) => {
+    res.json({
+        groqKeyPresent: !!process.env.GROQ_API_KEY,
+        openRouterKeyPresent: !!process.env.OPENROUTER_API_KEY
+    });
 });
 
 const PORT = process.env.PORT || 3000;
