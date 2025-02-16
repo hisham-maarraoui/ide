@@ -1618,6 +1618,27 @@ function setupInlineChat() {
                             const question = input.value.trim();
                             if (!question) return;
 
+                            // Get API keys and check model
+                            const apiKeys = getStoredApiKeys();
+                            const model = AVAILABLE_MODELS[currentModel];
+
+                            console.log('Inline chat - Current model:', model, 'Current model ID:', currentModel);
+
+                            if (!model) {
+                                alert('Please select a valid model');
+                                return;
+                            }
+
+                            // Check for required API key
+                            if (model.provider === 'groq' && !apiKeys.groq) {
+                                alert('Please configure your Groq API key in settings first.');
+                                return;
+                            }
+                            if (model.provider === 'openrouter' && !apiKeys.openrouter) {
+                                alert('Please configure your OpenRouter API key in settings first.');
+                                return;
+                            }
+
                             // Show loading state
                             this.domNode.innerHTML = `
                                 <div style="padding: 16px; color: #e0e0e0;">
@@ -1627,14 +1648,36 @@ function setupInlineChat() {
                             `;
 
                             try {
-                                const context = {
-                                    code: selectedText,
-                                    language: $selectLanguage.find(":selected").text(),
-                                };
+                                const response = await fetch('/api/chat', {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                    },
+                                    body: JSON.stringify({
+                                        message: question,
+                                        context: {
+                                            code: selectedText,
+                                            language: $selectLanguage.find(":selected").text(),
+                                        },
+                                        model: currentModel,
+                                        groq_api_key: apiKeys.groq,
+                                        openrouter_api_key: apiKeys.openrouter
+                                    })
+                                });
 
-                                const response = await getChatResponse(question, context, currentModel);
+                                if (!response.ok) {
+                                    const errorData = await response.json();
+                                    throw new Error(errorData.error?.details || `Request failed with status ${response.status}`);
+                                }
 
-                                // Create response container with better scrolling support
+                                const data = await response.json();
+                                console.log('Inline chat - Response received:', data);
+
+                                if (data.error) {
+                                    throw new Error(data.error.details || 'Unknown error occurred');
+                                }
+
+                                // Create response container
                                 const contentContainer = document.createElement('div');
                                 contentContainer.style.cssText = `
                                     max-height: 500px;
@@ -1648,7 +1691,7 @@ function setupInlineChat() {
                                     
                                     /* Enable touch scrolling */
                                     -webkit-overflow-scrolling: touch;
-                                    overscroll-behavior: contain; /* Prevent scroll chaining */
+                                    overscroll-behavior: contain;
                                     
                                     /* Custom scrollbar styling */
                                     &::-webkit-scrollbar {
@@ -1671,6 +1714,7 @@ function setupInlineChat() {
                                         background: #666;
                                     }
                                 `;
+
                                 contentContainer.innerHTML = `
                                     <div style="margin-bottom: 12px;">
                                         <strong class="assistant" style="color: #64B5F6;">Assistant:</strong>
@@ -1680,7 +1724,7 @@ function setupInlineChat() {
                                         word-break: break-word;
                                         line-height: 1.5;
                                         position: relative;
-                                    ">${renderMarkdown(response)}</div>
+                                    ">${renderMarkdown(data.response)}</div>
                                 `;
 
                                 // Create button container
@@ -1714,7 +1758,7 @@ function setupInlineChat() {
                                 `;
 
                                 // Handle code preview and apply
-                                const codeMatch = response.match(/```[\w]*\n([\s\S]*?)```/);
+                                const codeMatch = data.response.match(/```[\w]*\n([\s\S]*?)```/);
                                 if (codeMatch) {
                                     const suggestedCode = codeMatch[1].trim();
                                     previewButton.onclick = () => {
@@ -1748,6 +1792,7 @@ function setupInlineChat() {
                                 this.domNode.appendChild(buttonContainer);
 
                             } catch (error) {
+                                console.error('Inline chat error:', error);
                                 this.domNode.innerHTML = `
                                     <div style="padding: 16px;">
                                         <div style="color: #ff8080;">Error: ${error.message}</div>
